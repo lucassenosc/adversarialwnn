@@ -1,0 +1,322 @@
+from Wisard import Wisard, BloomWisard
+from BloomFilter import bloom_filter_parameters
+from utils import get_mnist
+import time
+import numpy as np
+import torch
+import torch.nn.functional as F
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import TensorDataset, DataLoader
+import foolbox as fb
+
+# --- Configuration ---
+# Wisard Params
+N_TUPLES = 48
+N_NODES = 50
+BITS_PER_INPUT = 6
+WITH_BLEACHING = False
+N_JOBS = -1
+
+# Surrogate Model Params
+SURROGATE_HIDDEN_SIZE1 = 256
+SURROGATE_HIDDEN_SIZE2 = 128
+SURROGATE_LR = 1e-3
+SURROGATE_EPOCHS = 20
+BATCH_SIZE = 128
+TEMPERATURE = 1.0
+
+# Foolbox Attack Params
+EPSILON = 3
+ATTACK = fb.attacks.mi_fgsm.L2MomentumIterativeFastGradientMethod()  # 30.68% (eps=3)
+# ATTACK = fb.attacks.L2AdamPGD() # 27.16% (eps=3)
+# ATTACK = fb.attacks.L2PGD() # 20.13% (eps=3)
+# ATTACK = fb.attacks.mi_fgsm.LinfMomentumIterativeFastGradientMethod()  # 68% (eps=0.15)
+
+WITH_AUGMENTATION = True
+
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {device}")
+
+
+def generate_soft_targets(wisard: Wisard, X_train):
+    print("\nGenerating surrogate soft targets using Wisard predict_proba...")
+    wisard_proba_list = wisard.predict_proba(X_train)
+    num_samples = len(wisard_proba_list)
+    sorted_classes = sorted(list(wisard.classes))
+    class_to_index = {c: i for i, c in enumerate(sorted_classes)}
+    num_classes = len(sorted_classes)
+
+    y_wisard_scores_np = np.zeros((num_samples, num_classes), dtype=np.float32)
+    for i, sample_scores_dict in enumerate(wisard_proba_list):
+        for class_label, score in sample_scores_dict.items():
+            if class_label in class_to_index:
+                idx = class_to_index[class_label]
+                y_wisard_scores_np[i, idx] = float(score)  # Ensure float
+
+    y_wisard_scores_torch = torch.tensor(y_wisard_scores_np, dtype=torch.float32)
+
+    y_surrogate_target_soft_torch = F.softmax(
+        y_wisard_scores_torch / TEMPERATURE, dim=1
+    )
+
+    return y_surrogate_target_soft_torch
+
+
+def train_wisard(wisard: Wisard, X_train, y_train):
+    print("Training...")
+    start = time.time()
+    wisard.train(X_train, y_train)
+    print(f"Training time: {time.time() - start}")
+    return wisard
+
+
+def train_surrogate(
+    model, X_train_tensor, soft_targets_tensor, epochs, lr, batch_size, temp
+):
+    print("\nTraining surrogate model...")
+    model.to(device)
+    model.train()
+
+    train_dataset = TensorDataset(X_train_tensor, soft_targets_tensor)
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=4,
+        pin_memory=True if device == "cuda" else False,
+    )
+
+    criterion = nn.KLDivLoss(reduction="batchmean")
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+
+    start_time = time.time()
+    for epoch in range(epochs):
+        epoch_loss = 0.0
+        for i, (inputs, soft_targets) in enumerate(train_loader):
+            inputs, soft_targets = inputs.to(device), soft_targets.to(device)
+
+            optimizer.zero_grad()
+            outputs_logits = model(inputs)
+
+            outputs_log_probs = F.log_softmax(outputs_logits / temp, dim=1)
+
+            loss = criterion(outputs_log_probs, soft_targets)
+
+            loss = loss * (temp**2)
+
+            loss.backward()
+            optimizer.step()
+            epoch_loss += loss.item()
+
+        avg_epoch_loss = epoch_loss / len(train_loader)
+        print(f"Epoch {epoch + 1}/{epochs} - Avg KL Div Loss: {avg_epoch_loss:.6f}")
+
+    end_time = time.time()
+    print(f"Surrogate training finished in {end_time - start_time:.2f} seconds.")
+    return model
+
+
+class SurrogateMLP(nn.Module):
+    def __init__(self, input_size, hidden_size1, hidden_size2, num_classes):
+        super().__init__()
+        self.network = nn.Sequential(
+            nn.Linear(input_size, hidden_size1),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(hidden_size1, hidden_size2),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(hidden_size2, num_classes),
+        )
+
+    def forward(self, x):
+        return self.network(x)
+
+
+class SurrogateCNN(nn.Module):
+    def __init__(self, num_classes=10):
+        super().__init__()
+        self.conv1 = nn.Conv2d(
+            in_channels=1, out_channels=32, kernel_size=3, padding=1
+        )  # output: (B, 32, 28, 28)
+        self.relu1 = nn.ReLU()
+        self.pool1 = nn.MaxPool2d(kernel_size=2, stride=2)  # output: (B, 32, 14, 14)
+
+        self.conv2 = nn.Conv2d(
+            in_channels=32, out_channels=64, kernel_size=3, padding=1
+        )  # output: (B, 64, 14, 14)
+        self.relu2 = nn.ReLU()
+        self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2)  # output: (B, 64, 7, 7)
+
+        flattened_size = 64 * 7 * 7
+
+        self.fc1 = nn.Linear(flattened_size, 128)
+        self.relu3 = nn.ReLU()
+        self.dropout = nn.Dropout(0.5)
+        self.fc2 = nn.Linear(128, num_classes)
+
+    def forward(self, x):
+        x = x.view(-1, 1, 28, 28)
+
+        x = self.conv1(x)
+        x = self.relu1(x)
+        x = self.pool1(x)
+
+        x = self.conv2(x)
+        x = self.relu2(x)
+        x = self.pool2(x)
+
+        x = x.view(x.size(0), -1)  # x.view(batch_size, 3136)
+
+        x = self.fc1(x)
+        x = self.relu3(x)
+        x = self.dropout(x)
+        x = self.fc2(x)  # output raw logits
+
+        return x
+
+
+def main():
+    size, hashes = bloom_filter_parameters(6000, 0.05)
+    wisard = BloomWisard(
+        n_tuples=N_TUPLES,
+        n_nodes=N_NODES,
+        bits_per_input=BITS_PER_INPUT,
+        bloom_size=size,
+        num_hashes=hashes,
+        dtype=bool,
+        withBleaching=WITH_BLEACHING,
+        n_jobs=N_JOBS,
+    )
+
+    X_train, y_train, X_test, y_test = get_mnist()
+
+    train_wisard(wisard, X_train, y_train)
+
+    print("\nEvaluating Wisard base performance...")
+    y_pred_wisard = wisard.predict(X_test)
+    wisard_clean_accuracy = np.mean(y_pred_wisard == y_test)
+    print(f"Wisard clean accuracy on test set: {wisard_clean_accuracy:.4f}")
+
+    if WITH_AUGMENTATION:
+        print("\nAugmenting training data with noise...")
+        augmented_X_train = np.zeros((X_train.shape[0] * 2, 784), dtype=np.float32)
+        augmented_X_train[: X_train.shape[0]] = X_train
+        augmented_X_train[X_train.shape[0] :] = np.clip(
+            X_train + np.random.normal(0, 0.3), 0, 1
+        )
+        X_train = augmented_X_train
+        y_train = np.concatenate([y_train, y_train])
+
+    soft_targets_tensor = generate_soft_targets(wisard, X_train)
+    surrogate_model = SurrogateCNN(num_classes=10)
+
+    X_train_tensor = torch.tensor(X_train, dtype=torch.float32)
+    surrogate_model = train_surrogate(
+        surrogate_model,
+        X_train_tensor,
+        soft_targets_tensor,
+        SURROGATE_EPOCHS,
+        SURROGATE_LR,
+        BATCH_SIZE,
+        TEMPERATURE,
+    )
+
+    surrogate_model.eval()
+    surrogate_model.to(device)
+
+    # with torch.no_grad():
+    #     X_test_tensor = torch.tensor(X_test, dtype=torch.float32).to(device)
+    #     print("\nEvaluating Surrogate model performance...")
+    #     y_pred_surrogate = surrogate_model(X_test_tensor)
+    #     y_pred_surrogate = torch.argmax(y_pred_surrogate, dim=1).cpu().numpy()
+    #     surrogate_accuracy = np.mean(y_pred_surrogate == y_test)
+    #     surrogate_wisard_accuracy = np.mean(y_pred_surrogate == y_pred_wisard)
+    # print(f"Surrogate model accuracy on test set: {surrogate_accuracy:.4f}")
+    # print(
+    #     f"Surrogate model accuracy on Wisard predictions: {surrogate_wisard_accuracy:.4f}"
+    # )
+
+    fb_model = fb.models.pytorch.PyTorchModel(
+        surrogate_model, bounds=(0, 1), device=device
+    )
+
+    correct_mask_wisard = y_pred_wisard == y_test
+
+    X_test_correct = X_test[correct_mask_wisard]
+    y_test_correct = y_test[correct_mask_wisard]
+
+    print(
+        f"Selected {len(X_test_correct)} test samples correctly classified by Wisard for attack."
+    )
+    # -----------------------------------------------------
+    inputs_torch = torch.tensor(X_test_correct, dtype=torch.float32).to(device)
+    labels_torch = torch.tensor(y_test_correct, dtype=torch.long).to(device)
+
+    criterion_fb = fb.criteria.Misclassification(labels_torch)
+
+    print(f"Generating adversarial examples using {ATTACK} with epsilon={EPSILON}...")
+    start_attack_time = time.time()
+    # Note: epsilons expects a list
+    raw_advs, clipped_advs, success = ATTACK(
+        fb_model, inputs_torch, criterion_fb, epsilons=[EPSILON]
+    )
+    end_attack_time = time.time()
+    print(
+        f"Foolbox attack generation took {end_attack_time - start_attack_time:.2f} seconds."
+    )
+
+    adv_inputs_torch = clipped_advs[0]
+    success_mask = success[0]
+
+    surrogate_attack_success_rate = success_mask.float().mean().item()
+    print(
+        f"Attack success rate against *surrogate* model: {surrogate_attack_success_rate:.4f}"
+    )
+
+    successful_adv_inputs_torch = adv_inputs_torch[success_mask]
+    original_labels_for_successful = labels_torch[success_mask]
+
+    if successful_adv_inputs_torch.shape[0] == 0:
+        print(
+            "No adversarial examples successfully fooled the surrogate model. Cannot test transfer."
+        )
+        return
+
+    successful_adv_inputs_np = (
+        successful_adv_inputs_torch.cpu().numpy().astype(X_train.dtype)
+    )
+    original_labels_np = original_labels_for_successful.cpu().numpy()
+
+    print(
+        f"Generated {len(successful_adv_inputs_np)} successful adversarial examples for transfer testing."
+    )
+
+    print("\nTesting transferability to the original Wisard model...")
+    start_transfer_time = time.time()
+    y_pred_wisard_adv = wisard.predict(successful_adv_inputs_np)
+    end_transfer_time = time.time()
+    print(
+        f"Wisard prediction on adversarial examples took {end_transfer_time - start_transfer_time:.2f} seconds."
+    )
+
+    transfer_misclassified_mask = y_pred_wisard_adv != original_labels_np
+    transfer_attack_success_rate = np.mean(transfer_misclassified_mask)
+    num_transferred = np.sum(transfer_misclassified_mask)
+
+    print("\n" + "=" * 30 + " Results " + "=" * 30)
+    print(f"Wisard Clean Accuracy (Test Set):         {wisard_clean_accuracy:.4f}")
+    print(
+        f"Surrogate Attack Success Rate (on itself): {surrogate_attack_success_rate:.4f}"
+    )
+    print(f"Transfer Attack Success Rate to Wisard: {transfer_attack_success_rate:.4f}")
+    print(
+        f"({num_transferred} out of {len(successful_adv_inputs_np)} successful surrogate attacks transferred)"
+    )
+    print("=" * 70)
+
+
+if __name__ == "__main__":
+    main()
