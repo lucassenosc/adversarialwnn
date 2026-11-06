@@ -1,17 +1,19 @@
 # MNIST experiments with PyWiSARD
 
-Section 5 of *Binarization as an Attack Surface in Weightless Neural Networks* uses MNIST to study how image perturbations cross encoding thresholds and change predictions. This directory documents the available MNIST code. The [IDS guide](../../README.md) describes the separate network experiments in Section 6.
+This directory collects the MNIST reference material discussed in Section 5 of *Binarization as an Attack Surface in Weightless Neural Networks*. The examples illustrate how image perturbations cross encoding thresholds and change predictions.
 
-The [PyWiSARD snapshot](../../third_party/pywisard) provides DictWiSARD and Bloom WiSARD, with examples on MNIST. It comes from [theuvargas/pywisard at `ed76cd6`][revision] and retains the [original MIT license][license]. The script here runs the random-probe protocol for the two WiSARD models. See the [coverage table](#mnist-experiments-in-the-paper) for the files still needed to recreate the published results.
+The bundled PyWiSARD source provides DictWiSARD and Bloom WiSARD. The script here runs the random-probe protocol for both models. [PyWiSARD source](pywisard/) · [Upstream revision `ed76cd6`][revision] · [Original MIT license][license]
+
+The coverage table lists the original files still needed to recreate the published results. [MNIST results discussed in the paper](#mnist-results-discussed-in-the-paper)
 
 ## Installation and data
 
-Start in the root of the `adversarialwnn` checkout. Use Python 3.12 for MNIST and create a separate environment inside `experiments/mnist`.
+Start at the root of the `adversarialwnn` checkout. Use Python 3.12 and create the virtual environment inside `mnist/`.
 
 Bash:
 
 ```bash
-cd experiments/mnist
+cd mnist
 python3.12 -m venv .venv
 source .venv/bin/activate
 ```
@@ -19,7 +21,7 @@ source .venv/bin/activate
 Windows PowerShell:
 
 ```powershell
-cd experiments/mnist
+cd mnist
 py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 ```
@@ -28,11 +30,13 @@ In the activated environment, install the CPU wheels for Linux or Windows, then 
 
 ```bash
 python -m pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu
-python -m pip install -e ../../third_party/pywisard
+python -m pip install -e ./pywisard
 python -m pip check
 ```
 
-Run the following commands from `experiments/mnist/`. The [MNIST loader][loader] downloads the standard 60,000 training and 10,000 test images through torchvision and caches them under `experiments/mnist/data/MNIST/`. Each image is scaled to `[0, 1]` and flattened to 784 features.
+Run the following commands from `mnist/`. The loader downloads the standard 60,000 training and 10,000 test images through torchvision and caches them under `mnist/data/MNIST/`. Each image is scaled to `[0, 1]` and flattened to 784 features. [MNIST loader][loader]
+
+To reuse a download from the previous layout, move `experiments/mnist/data/` to `mnist/data/`.
 
 ## Run the random probes
 
@@ -53,13 +57,13 @@ These commands use the settings in the public code and train on the standard MNI
 | Clean classification | `python -m pywisard.attacks.clean.main` | DictWiSARD with 6 bits per input. [Source][clean] |
 | Random probes | `python -m pywisard.attacks.random.main` | DictWiSARD and Bloom WiSARD with 1 bit per input, Random L∞ at ε = 0.1, and Random L2 at ε = 1.58. [Source][random] · [Settings][config] |
 | Surrogate transfer | `python -m pywisard.attacks.transfer.main` | Bloom WiSARD with 1 bit per input, a 256/128 MLP trained on soft targets, and L2 MI-FGSM at ε = 3. [Source][transfer] · [Settings][config] |
-| Exploratory Simulated Annealing | `python ../../third_party/pywisard/src/pywisard/l2attack.py` | One MNIST example against Bloom WiSARD using Gaussian proposals and an L2 budget of 2. It writes `original.png` and `adversary.png` in the current directory. [Source][legacy-sa] |
+| Exploratory Simulated Annealing | `python ./pywisard/src/pywisard/l2attack.py` | One MNIST example against Bloom WiSARD using Gaussian proposals and an L2 budget of 2. It writes `original.png` and `adversary.png` in the current directory. [Source][legacy-sa] |
 
 The transfer example uses four data-loader workers. In an environment that restricts communication between worker processes, set `num_workers=0` in the [training loader][trainer] to run the example with one process.
 
-## MNIST experiments in the paper
+## MNIST results discussed in the paper
 
-| Paper result | What can be examined or run here | Files needed to recreate the published result |
+| Result discussed in the paper | What can be examined or run here | Files needed to recreate the published result |
 | --- | --- | --- |
 | **Model-agnostic probes** (Sections 4.1 and 5.2, Table 2, Figure 1) | The [noise functions][random] and the recipe above implement Random L∞ at ε = 0.1 and Random L2 at ε = 3 for DictWiSARD and Bloom WiSARD. Noise is clipped to the image range after perturbation. | The original run settings, tuple mappings or seeds, BTHOWeN evaluation, and the image index and noise used for Figure 1. |
 | **BTHOWeN encoding comparison** (Section 5.3, Table 3, Figure 2) | PyWiSARD provides a [linear thermometer][linear] and Bloom WiSARD. The paper compares Gaussian and linear thermometer encodings within BTHOWeN while holding the other settings fixed. | The BTHOWeN revision and configuration used in the paper (6 bits per input, tuple size 49, 784 RAMs, counting filters of size 8,192 with 4 hashes, and bleaching). Include both encoders, the Gaussian threshold fitting code, and the 100 test-image indices used to count bit changes out of 4,704 bits per image under Random L∞ at ε = 0.1. |
@@ -85,4 +89,4 @@ PyWiSARD is released under the [MIT License][license].
 [transfer]: https://github.com/theuvargas/pywisard/blob/ed76cd6f216a5ec8b9541ef0951f8018df2c3cd1/src/pywisard/attacks/transfer/main.py
 [trainer]: https://github.com/theuvargas/pywisard/blob/ed76cd6f216a5ec8b9541ef0951f8018df2c3cd1/src/pywisard/attacks/transfer/trainer.py#L68-L80
 [legacy-sa]: https://github.com/theuvargas/pywisard/blob/ed76cd6f216a5ec8b9541ef0951f8018df2c3cd1/src/pywisard/l2attack.py
-[license]: https://github.com/theuvargas/pywisard/blob/ed76cd6f216a5ec8b9541ef0951f8018df2c3cd1/LICENSE
+[license]: pywisard/LICENSE
