@@ -21,8 +21,6 @@ The Random L∞ and Random L2 methods are model-agnostic sensitivity probes.
 
 The repository also contains auxiliary Decision Tree and Random Forest notebooks. These notebooks are retained as exploratory baselines, but they are **not required to reproduce the IDS results reported in the current paper**.
 
-A locally adapted `carlini_wagner_l2.py` implementation is also retained for compatibility with previous C&W experiments. The current paper does **not** use the unverified C&W results in its reported IDS analyses, so C&W is not required to reproduce the paper's IDS tables and figures.
-
 ## Repository Structure
 
 ```text
@@ -51,7 +49,6 @@ A locally adapted `carlini_wagner_l2.py` implementation is also retained for com
 │
 ├── libs/
 │   ├── bloom_filter.py
-│   ├── carlini_wagner_l2.py
 │   └── wisard.py
 │
 ├── preprocessing/
@@ -112,9 +109,6 @@ The UNSW-NB15 train/test files are expected to already be present in `data/unsw_
 
 - `libs/bloom_filter.py`  
   Bloom-filter implementation used by `libs/wisard.py`.
-
-- `libs/carlini_wagner_l2.py`  
-  Locally adapted CleverHans C&W L2 implementation retained for compatibility with previous experiments. It is not required for the paper-reported IDS results.
 
 ## Reference Environment
 
