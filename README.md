@@ -1,8 +1,13 @@
 # Binarization as an Attack Surface in Weightless Neural Networks
 
-Reproducibility repository for the intrusion-detection experiments associated with **“Binarization as an Attack Surface in Weightless Neural Networks.”**
+Experimental artifact for **“Binarization as an Attack Surface in Weightless Neural Networks.”**
 
-The repository contains the experimental pipelines for **Standard WiSARD** and **Bloom WiSARD** on the **Bot-IoT**, **CICIDS2017**, and **UNSW-NB15** intrusion-detection datasets, together with preprocessing, report aggregation, curve-generation utilities, local WiSARD/Bloom implementations, and environment specifications.
+| Paper experiments | Materials in this repository | Start here |
+| --- | --- | --- |
+| **Intrusion detection (Section 6)** | Standard WiSARD and Bloom WiSARD pipelines, preprocessing, and reports for Bot-IoT, CICIDS2017, and UNSW-NB15. | [IDS setup and notebooks](#reference-environment) |
+| **MNIST (Section 5)** | PyWiSARD source, runnable examples, and a script for a new run of the Table 2 random probes for DictWiSARD and Bloom WiSARD. | [MNIST setup and coverage](experiments/mnist/README.md) |
+
+Use a separate Python environment for each track. The MNIST guide lists the additional original files needed to recreate the published MNIST tables and figures.
 
 ## Scope
 
@@ -36,6 +41,10 @@ A locally adapted `carlini_wagner_l2.py` implementation is also retained for com
 │   │   ├── decision_tree.ipynb
 │   │   └── random_forest.ipynb
 │   │
+│   ├── mnist/
+│   │   ├── README.md
+│   │   └── run_random_probes.py
+│   │
 │   └── wisard/
 │       ├── bloom_wisard.ipynb
 │       └── standart_wisard.ipynb
@@ -53,6 +62,9 @@ A locally adapted `carlini_wagner_l2.py` implementation is also retained for com
 │   ├── aggregated_reports/
 │   ├── curves_data/
 │   └── reports/
+│
+├── third_party/
+│   └── pywisard/                 # PyWiSARD source and original MIT license
 │
 ├── .gitattributes
 ├── .gitignore
@@ -106,7 +118,7 @@ The UNSW-NB15 train/test files are expected to already be present in `data/unsw_
 
 ## Reference Environment
 
-The validated reference environment uses:
+The validated IDS reference environment uses:
 
 ```text
 Python 3.13.12
@@ -119,13 +131,12 @@ Two dependency files are provided:
 
 For the closest reproduction of the validated environment, use `requirements-lock.txt`.
 
-## 1. Obtain the Anonymized Repository
+## 1. Obtain the Repository
 
-The anonymized reproducibility artifact associated with the paper is available at:
-
-https://anonymous.4open.science/r/artifact-8C48/
-
-Download the repository from the anonymized artifact page and open a terminal in the project root directory before continuing with the environment setup.
+```bash
+git clone https://github.com/lucassenosc/adversarialwnn.git
+cd adversarialwnn
+```
 
 ## 2. Create a Virtual Environment
 
@@ -276,29 +287,19 @@ experiments/wisard/standart_wisard.ipynb
 experiments/wisard/bloom_wisard.ipynb
 ```
 
-Select the project's `.venv` as the notebook kernel and use **Run All**.
-
 The notebooks include project-root discovery logic, so they can be opened from their current subdirectories while still resolving `data/`, `libs/`, and `results/` from the repository root.
 
-Before running a full experiment, review the experiment control panel near the beginning of each notebook. It controls items such as:
+Select the project's `.venv` as the notebook kernel. Before using **Run All**, set the experiment control panel in each notebook to the paper's IDS scope:
 
-```text
-DATASETS_TO_RUN
-RUN_BINARY
-RUN_MULTICLASS
-ENCODING_TYPES
-ATTACKS_TO_RUN
+```python
+DATASETS_TO_RUN = ["Bot-IoT", "UNSW-NB15", "CICIDS"]
+RUN_BINARY = True
+RUN_MULTICLASS = True
+ENCODING_TYPES = ["linear", "gaussian"]
+ATTACKS_TO_RUN = ["FGSM", "RANDOM_LINF", "RANDOM_L2"]
 ```
 
-For paper-aligned IDS reproduction, the reported perturbation methods are:
-
-```text
-FGSM
-RANDOM_LINF
-RANDOM_L2
-```
-
-The notebooks may contain additional optional/legacy experimental code, but such configurations are not required to reproduce the reported IDS results.
+Use the same selection when computing paper summaries from the archived CSVs. The repository also contains exploratory runs and configurations beyond this selection.
 
 ## 7. Results
 
@@ -373,7 +374,7 @@ These are auxiliary exploratory baselines. They are not required for reproductio
 
 A reviewer reproducing the IDS experiments should:
 
-1. Download the anonymized reproducibility artifact from the link above.
+1. Clone the public repository.
 2. Use Python 3.13.12.
 3. Create and activate a fresh virtual environment.
 4. Install `requirements-lock.txt` for the validated environment.
@@ -381,20 +382,14 @@ A reviewer reproducing the IDS experiments should:
 6. Download the three IDS datasets and place them under `data/`.
 7. Generate the Bot-IoT/CICIDS2017 prepared splits if necessary.
 8. Select the new virtual environment as the Jupyter kernel.
-9. Run the Standard WiSARD and/or Bloom WiSARD notebook.
+9. Apply the IDS settings above and run the Standard WiSARD and Bloom WiSARD notebooks.
 10. Aggregate generated CSV reports with `analysis/aggregate_reports.ipynb`.
 11. Generate comparison curves with `analysis/curva_roc.ipynb` when needed.
 
-## Important Scope Note
-
-The repository structure documented above corresponds to the **IDS experimental pipeline** currently present in this repository.
-
-The paper also contains separate MNIST experiments, including threshold-crossing/certificate diagnostics, Simulated Annealing, and surrogate-transfer experiments. Those experiments require their corresponding implementation files to be included in the reproducibility artifact if the repository is intended to reproduce the **entire paper**, rather than only its IDS component.
-
 ## License / Citation
+
+The source in `third_party/pywisard/` is a snapshot of [theuvargas/pywisard at `ed76cd6`](https://github.com/theuvargas/pywisard/tree/ed76cd6f216a5ec8b9541ef0951f8018df2c3cd1) and retains its [original MIT license and copyright notice](third_party/pywisard/LICENSE).
 
 If this repository is used in academic work, please cite the associated paper:
 
 > *Binarization as an Attack Surface in Weightless Neural Networks.*
-
-Full citation metadata can be added after the double-blind review process is complete.
