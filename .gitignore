@@ -1,5 +1,9 @@
 # Large datasets are downloaded separately
+/ids/data/
+
+# Local files from earlier checkouts
 /data/
+/experiments/mnist/
 
 # Virtual environments
 .venv/
