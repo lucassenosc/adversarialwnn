@@ -1,7 +1,7 @@
 import numpy as np
-from Wisard import Wisard, BloomWisard, DictWisard
-from utils import get_mnist
-from BloomFilter import bloom_filter_parameters
+from pywisard.Wisard import Wisard, BloomWisard, DictWisard
+from pywisard.utils import get_mnist
+from pywisard.BloomFilter import bloom_filter_parameters
 import time
 import matplotlib.pyplot as plt
 
@@ -140,6 +140,7 @@ def simulated_annealing(
     target=None,
     n_iter=20_000,
     with_early_exit=False,
+    verbose=True,
 ):
     current_image = np.copy(image)
     current_fitness = fitness(model, current_image, label, target)
@@ -177,7 +178,7 @@ def simulated_annealing(
 
         temperature = max(temperature * cooling_rate, min_temp)
 
-        if i % 100 == 0:
+        if verbose and i % 100 == 0:
             print(
                 f"[{i}] {best_fitness:.4f} ({temperature:.4f}deg), step_size: {step_size:.4f}, Prob: {probability:.4f}",
             )
@@ -203,6 +204,77 @@ def create_l2_noise_generator(original_image, epsilon):
 
         candidate_image = np.clip(original_image + new_delta, 0, 1)
         return candidate_image
+
+    return add_noise
+
+
+def create_threshold_noise_generator(
+    original_image,
+    epsilon,
+    bits_per_input,
+    restore=False,
+    norm="l2",
+    margin=0.001,
+    max_tries=100,
+):
+    """Moves one random pixel across one of its two neighbouring thermometer
+    thresholds (50% chance each; pixels at the edges only have one option).
+
+    Candidates that would exceed the L2 budget are rejected and redrawn. If no
+    valid move is found after max_tries, the current image is returned.
+
+    restore=False is the version used in the paper: a pixel that crosses back
+    into its original bin stays just past the threshold, so it keeps spending
+    budget without changing what the model sees.
+    restore=True fixes this: a pixel that re-enters its original bin is set
+    back to its original value, freeing the budget it used.
+
+    norm is the budget: "l2" (epsilon bounds the L2 norm of the whole
+    perturbation) or "linf" (every pixel may move at most epsilon).
+
+    step_size is ignored; it is only accepted to match simulated_annealing.
+    """
+    if norm not in ("l2", "linf"):
+        raise ValueError("norm must be 'l2' or 'linf'")
+    thresholds = np.linspace(0, 1, bits_per_input + 1, endpoint=False)[1:]
+    original = original_image.ravel()
+
+    def bin_of(value):
+        # Number of thresholds the value is at or above (same rule as binarize_dataset)
+        return np.searchsorted(thresholds, value, side="right")
+
+    def add_noise(current_image, step_size=None):
+        current = current_image.ravel()
+
+        for _ in range(max_tries):
+            i = np.random.randint(current.size)
+            b = bin_of(current[i])
+
+            options = []
+            if b > 0:  # cross the threshold below
+                options.append(thresholds[b - 1] - margin)
+            if b < len(thresholds):  # cross the threshold above
+                options.append(thresholds[b] + margin)
+            new_value = options[np.random.randint(len(options))]
+
+            if restore and bin_of(new_value) == bin_of(original[i]):
+                new_value = original[i]
+
+            new_value = np.clip(new_value, 0, 1)
+            if norm == "linf":
+                # Only pixel i changes, so only its own distance matters
+                if abs(new_value - original[i]) > epsilon:
+                    continue
+                candidate = current.copy()
+                candidate[i] = new_value
+                return candidate.reshape(current_image.shape)
+
+            candidate = current.copy()
+            candidate[i] = new_value
+            if np.linalg.norm(candidate - original) <= epsilon:
+                return candidate.reshape(current_image.shape)
+
+        return current_image.copy()
 
     return add_noise
 

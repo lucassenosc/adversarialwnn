@@ -2,7 +2,7 @@
 
 This directory collects the MNIST reference material discussed in Section 5 of *Binarization as an Attack Surface in Weightless Neural Networks*. The examples illustrate how image perturbations cross encoding thresholds and change predictions.
 
-The bundled PyWiSARD source provides DictWiSARD and Bloom WiSARD. The script here runs the random-probe protocol for both models. [PyWiSARD source](pywisard/) · [Upstream revision `ed76cd6`][revision] · [Original MIT license][license]
+The bundled PyWiSARD source provides DictWiSARD, Bloom WiSARD, and the Simulated Annealing batch runner. The random-probe script here evaluates both WiSARD models. [PyWiSARD source](pywisard/) · [Upstream revision `f1f34cb`][revision] · [Original MIT license][license]
 
 The coverage table lists the original files still needed to recreate the published results. [MNIST results discussed in the paper](#mnist-results-discussed-in-the-paper)
 
@@ -48,6 +48,33 @@ The script uses the model settings and perturbation budgets for the DictWiSARD a
 
 The script writes `mnist_random_probes_example.csv` with accuracy and retention, where retention is 100 × perturbed accuracy ÷ clean accuracy. Treat the CSV as a fresh run. The script fixes the noise seed for this recipe. The library generates [tuple mappings][mapping] with a separate unseeded generator during training, so the accuracies can vary across runs.
 
+## Run Simulated Annealing on MNIST
+
+Use the Bash setup above in Linux or WSL. The [PyWiSARD runner][batch-sa] starts workers with `fork`. Run it from `mnist/`.
+
+```bash
+python -m pywisard.attacks.annealing.main --n-jobs 2
+```
+
+The runner trains one DictWiSARD per resolution (1, 2, 4, and 6 bits per pixel) with 48 bits per tuple, 50 Boolean RAMs per discriminator, and bleaching disabled. The default `threshold` mode proposes moves across neighboring linear thermometer thresholds with an L2 budget of 1.58 and up to 5,000 iterations per image. It evaluates all 10,000 test images. The ASR counts every final prediction that differs from the true label, including clean misclassifications.
+
+The command writes `annealing_asr.csv` with bits per pixel, clean accuracy, and attack success rate. Both rates are stored as fractions. A short run on the first eight test images checks that the runner executes.
+
+```bash
+python -m pywisard.attacks.annealing.main --bits 6 --n-samples 8 --n-jobs 2 --output annealing_smoke.csv
+```
+
+Vargas reports the following reference values in [Tables 7 and 8 of the thesis][sa-reference].
+
+| Bits per pixel | Reported clean accuracy | Reported ASR |
+| ---: | ---: | ---: |
+| 1 | 94.67% | 24.24% |
+| 2 | 94.55% | 85.76% |
+| 4 | 94.72% | 97.25% |
+| 6 | 94.97% | 98.93% |
+
+The [public annealer][sa-settings] starts at temperature 10.0 and cools by a factor of 0.999 to a floor of 0.001. The [thesis methodology][sa-method] specifies an initial temperature of 1.0, a cooling factor of 0.9, and a reset after five consecutive rejections. The `--seed` option controls the attack draws. PyWiSARD samples the [model mappings][mapping] independently without a fixed seed.
+
 ## Public examples
 
 These commands use the settings in the public code and train on the standard MNIST training set. The clean and random examples print accuracy to the terminal. The transfer example prints the transfer rate if it finds adversarial examples that fool its surrogate.
@@ -67,7 +94,7 @@ The transfer example uses four data-loader workers. In an environment that restr
 | --- | --- | --- |
 | **Model-agnostic probes** (Sections 4.1 and 5.2, Table 2, Figure 1) | The [noise functions][random] and the recipe above implement Random L∞ at ε = 0.1 and Random L2 at ε = 3 for DictWiSARD and Bloom WiSARD. Noise is clipped to the image range after perturbation. | The original run settings, tuple mappings or seeds, BTHOWeN evaluation, and the image index and noise used for Figure 1. |
 | **BTHOWeN encoding comparison** (Section 5.3, Table 3, Figure 2) | PyWiSARD provides a [linear thermometer][linear] and Bloom WiSARD. The paper compares Gaussian and linear thermometer encodings within BTHOWeN while holding the other settings fixed. | The BTHOWeN revision and configuration used in the paper (6 bits per input, tuple size 49, 784 RAMs, counting filters of size 8,192 with 4 hashes, and bleaching). Include both encoders, the Gaussian threshold fitting code, and the 100 test-image indices used to count bit changes out of 4,704 bits per image under Random L∞ at ε = 0.1. |
-| **Query-based Simulated Annealing** (Sections 4.2 and 5.4, Figure 3) | The [public SA example][legacy-sa] uses Gaussian proposals against Bloom WiSARD. The paper's attack queries DictWiSARD and proposes moving one pixel to a thermometer threshold at a time. It succeeds when the true-class score falls below the highest competing score. | The score-based threshold proposal and evaluation code for 1, 2, 4, and 6 bits per input. The reported settings are an L2 budget of 1.58, initial temperature 1.0, cooling rate 0.9, up to 5,000 iterations per image, and a temperature reset after five consecutive rejections. Include the evaluated sample indices and the trace or saved input and perturbation used for Figure 3. |
+| **Query-based Simulated Annealing** (Sections 4.2 and 5.4, Figure 3) | The [batch runner][batch-sa] evaluates DictWiSARD at 1, 2, 4, and 6 bits per input using threshold proposals. [Run guide](#run-simulated-annealing-on-mnist) | The original model mappings or training seeds, the annealing configuration used for the reported runs, and the input and attack trace for Figure 3. |
 | **Surrogate transfer** (Sections 4.3 and 5.5, Table 5) | The [public transfer example][transfer] shows soft-target training and transfer to Bloom WiSARD. | The runs targeting DictWiSARD at 1, 2, 4, and 6 bits per input with a 256/256 MLP, soft WNN labels, and KL divergence. Include the four Foolbox 3.3.4 attacks (FGSM, BIM, MI-FGSM, and PGD) in L∞ at ε = 0.15, training and attack settings, and the three independent runs per setting. The aggregation should report both the surrogate fooling rate and the transfer rate among examples that fool the surrogate. |
 
 For the transfer protocol in Section 4.3, FGSM uses one gradient-sign step. BIM and MI-FGSM use 10 steps of 0.03 with no random initialization. MI-FGSM uses momentum 1.0. PGD uses 40 steps of 0.005 and a random start within the budget. All inputs stay within `[0, 1]`.
@@ -78,15 +105,19 @@ A complete artifact for Section 5 should archive the original scripts and per-ru
 
 PyWiSARD is released under the [MIT License][license].
 
-[revision]: https://github.com/theuvargas/pywisard/tree/ed76cd6f216a5ec8b9541ef0951f8018df2c3cd1
+[revision]: https://github.com/theuvargas/pywisard/tree/f1f34cb671af8eb8ea56a0a77f979e472954d6c0
 [torch]: https://pytorch.org/get-started/previous-versions/
-[loader]: https://github.com/theuvargas/pywisard/blob/ed76cd6f216a5ec8b9541ef0951f8018df2c3cd1/src/pywisard/utils.py#L8-L33
-[linear]: https://github.com/theuvargas/pywisard/blob/ed76cd6f216a5ec8b9541ef0951f8018df2c3cd1/src/pywisard/utils.py#L36-L51
-[mapping]: https://github.com/theuvargas/pywisard/blob/ed76cd6f216a5ec8b9541ef0951f8018df2c3cd1/src/pywisard/Wisard.py#L118-L121
-[clean]: https://github.com/theuvargas/pywisard/blob/ed76cd6f216a5ec8b9541ef0951f8018df2c3cd1/src/pywisard/attacks/clean/main.py#L8-L48
-[random]: https://github.com/theuvargas/pywisard/blob/ed76cd6f216a5ec8b9541ef0951f8018df2c3cd1/src/pywisard/attacks/random/main.py
-[config]: https://github.com/theuvargas/pywisard/blob/ed76cd6f216a5ec8b9541ef0951f8018df2c3cd1/src/pywisard/attacks/config.py
-[transfer]: https://github.com/theuvargas/pywisard/blob/ed76cd6f216a5ec8b9541ef0951f8018df2c3cd1/src/pywisard/attacks/transfer/main.py
-[trainer]: https://github.com/theuvargas/pywisard/blob/ed76cd6f216a5ec8b9541ef0951f8018df2c3cd1/src/pywisard/attacks/transfer/trainer.py#L68-L80
-[legacy-sa]: https://github.com/theuvargas/pywisard/blob/ed76cd6f216a5ec8b9541ef0951f8018df2c3cd1/src/pywisard/l2attack.py
+[loader]: https://github.com/theuvargas/pywisard/blob/f1f34cb671af8eb8ea56a0a77f979e472954d6c0/src/pywisard/utils.py#L8-L33
+[linear]: https://github.com/theuvargas/pywisard/blob/f1f34cb671af8eb8ea56a0a77f979e472954d6c0/src/pywisard/utils.py#L36-L51
+[mapping]: https://github.com/theuvargas/pywisard/blob/f1f34cb671af8eb8ea56a0a77f979e472954d6c0/src/pywisard/Wisard.py#L118-L121
+[clean]: https://github.com/theuvargas/pywisard/blob/f1f34cb671af8eb8ea56a0a77f979e472954d6c0/src/pywisard/attacks/clean/main.py#L8-L48
+[random]: https://github.com/theuvargas/pywisard/blob/f1f34cb671af8eb8ea56a0a77f979e472954d6c0/src/pywisard/attacks/random/main.py
+[config]: https://github.com/theuvargas/pywisard/blob/f1f34cb671af8eb8ea56a0a77f979e472954d6c0/src/pywisard/attacks/config.py
+[transfer]: https://github.com/theuvargas/pywisard/blob/f1f34cb671af8eb8ea56a0a77f979e472954d6c0/src/pywisard/attacks/transfer/main.py
+[trainer]: https://github.com/theuvargas/pywisard/blob/f1f34cb671af8eb8ea56a0a77f979e472954d6c0/src/pywisard/attacks/transfer/trainer.py#L68-L80
+[legacy-sa]: https://github.com/theuvargas/pywisard/blob/f1f34cb671af8eb8ea56a0a77f979e472954d6c0/src/pywisard/l2attack.py
+[batch-sa]: pywisard/src/pywisard/attacks/annealing/main.py
+[sa-settings]: pywisard/src/pywisard/l2attack.py#L151-L153
+[sa-method]: https://pantheon.ufrj.br/bitstreams/44037ef9-04d8-4cf2-8433-38ef5fb7c674/download#page=32
+[sa-reference]: https://pantheon.ufrj.br/bitstreams/44037ef9-04d8-4cf2-8433-38ef5fb7c674/download#page=37
 [license]: pywisard/LICENSE
