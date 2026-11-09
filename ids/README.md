@@ -20,6 +20,7 @@ The repository also contains auxiliary Decision Tree and Random Forest notebooks
 .
 ├── analysis/
 │   ├── aggregate_reports.ipynb
+│   ├── make_ids_tables.py
 │   └── curva_roc.ipynb
 │
 ├── data/                         # Not versioned; downloaded separately
@@ -80,6 +81,9 @@ The UNSW-NB15 train/test files are expected to already be present in `data/unsw_
 
 ### Analysis
 
+- `analysis/make_ids_tables.py`  
+  Reads `results/aggregated_reports/` and writes `ids_tables.tex` with Tables 7–9 of the paper.
+  
 - `analysis/aggregate_reports.ipynb`  
   Reads individual CSV files from `results/reports/` and writes grouped outputs to `results/aggregated_reports/`.
 
@@ -322,6 +326,19 @@ results/aggregated_reports/
 
 The aggregator groups experiment files according to the filename convention used by the experimental notebooks.
 
+### Regenerate the paper's IDS tables
+
+After aggregation, run from `ids/`:
+
+```bash
+python analysis/make_ids_tables.py
+```
+
+This writes `results/aggregated_reports/ids_tables.tex` with Tables 7–9 of the
+paper. It uses only the linear and Gaussian encodings and the three paper
+perturbations (FGSM, Random L2, Random L∞). The distributive, C&W, BPDA, and
+HSJA runs that are also present in the CSVs are excluded.
+
 ## 9. Generate ROC / PR Comparisons
 
 Run:
@@ -363,7 +380,8 @@ A reviewer reproducing the IDS experiments should:
 8. Select the new virtual environment as the Jupyter kernel.
 9. Apply the IDS settings above and run the Standard WiSARD and Bloom WiSARD notebooks.
 10. Aggregate generated CSV reports with `analysis/aggregate_reports.ipynb`.
-11. Generate comparison curves with `analysis/curva_roc.ipynb` when needed.
+11. Regenerate Tables 7–9 of the paper with `python analysis/make_ids_tables.py`.
+12. Generate comparison curves with `analysis/curva_roc.ipynb` when needed.
 
 ## Citation
 
