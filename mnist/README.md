@@ -50,30 +50,30 @@ The script writes `mnist_random_probes_example.csv` with accuracy and retention,
 
 ## Run Simulated Annealing on MNIST
 
-Use the Bash setup above in Linux or WSL. The [PyWiSARD runner][batch-sa] starts workers with `fork`. Run it from `mnist/`.
+Use the Bash setup above in Linux or WSL. The [PyWiSARD runner][batch-sa] starts workers with `fork`. Run it from `mnist/`. The paper (Section 5.4) uses the L2 budget 3 and the first 200 test images:
 
 ```bash
-python -m pywisard.attacks.annealing.main --n-jobs 2
+python -m pywisard.attacks.annealing.main --epsilon 3 --n-samples 200 --n-jobs 2 --output annealing_asr.csv
 ```
 
-The runner trains one DictWiSARD per resolution (1, 2, 4, and 6 bits per pixel) with 48 bits per tuple, 50 Boolean RAMs per discriminator, and bleaching disabled. The default `threshold` mode proposes moves across neighboring linear thermometer thresholds with an L2 budget of 1.58 and up to 5,000 iterations per image. It evaluates all 10,000 test images. The ASR counts every final prediction that differs from the true label, including clean misclassifications.
+The runner trains one DictWiSARD per resolution (1, 2, 4, and 6 bits per pixel) with 48 bits per tuple, 50 Boolean RAMs per discriminator, and bleaching disabled. The default `threshold` mode proposes moves across neighboring linear thermometer thresholds, with up to 5,000 iterations per image. The [annealer][sa-settings] starts at temperature 10.0 and cools by a factor of 0.999 per iteration to a floor of 0.001, stopping early once the attack succeeds. Budget spent on a pixel is not recovered if the pixel returns to its original bin, so the attack is conservative. The ASR counts every final prediction that differs from the true label, including clean misclassifications.
 
-The command writes `annealing_asr.csv` with bits per pixel, clean accuracy, and attack success rate. Both rates are stored as fractions. A short run on the first eight test images checks that the runner executes.
+The command writes `annealing_asr.csv` with bits per pixel, clean accuracy, and attack success rate, stored as fractions. The paper reports these values:
+
+| Bits per pixel | ASR, first 200 test images | ASR, correctly classified images only |
+| ---: | ---: | ---: |
+| 1 | 62.0% | 60.2% |
+| 2 | 75.5% | 74.9% |
+| 4 | 90.0% | 89.6% |
+| 6 | 95.0% | 94.8% |
+
+PyWiSARD samples the [model mappings][mapping] without a fixed seed, so each run trains slightly different models and the rates vary by a few points between runs. The `--seed` option controls the attack draws. A short run on the first eight test images checks that the runner executes.
 
 ```bash
 python -m pywisard.attacks.annealing.main --bits 6 --n-samples 8 --n-jobs 2 --output annealing_smoke.csv
 ```
 
-Vargas reports the following reference values in [Tables 7 and 8 of the thesis][sa-reference].
-
-| Bits per pixel | Reported clean accuracy | Reported ASR |
-| ---: | ---: | ---: |
-| 1 | 94.67% | 24.24% |
-| 2 | 94.55% | 85.76% |
-| 4 | 94.72% | 97.25% |
-| 6 | 94.97% | 98.93% |
-
-The [public annealer][sa-settings] starts at temperature 10.0 and cools by a factor of 0.999 to a floor of 0.001. The [thesis methodology][sa-method] specifies an initial temperature of 1.0, a cooling factor of 0.9, and a reset after five consecutive rejections. The `--seed` option controls the attack draws. PyWiSARD samples the [model mappings][mapping] independently without a fixed seed.
+An earlier configuration with L2 budget 1.58, reported in [Vargas's thesis][sa-reference], is not used in the paper.
 
 ## Public examples
 
